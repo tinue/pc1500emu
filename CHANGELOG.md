@@ -4,6 +4,17 @@ All notable changes to this project are documented here. Versions follow
 `CMakeLists.txt`'s `project(pc1500emu VERSION ...)`, bumped on every push
 per this project's own convention (not just milestones).
 
+## [0.7.4] - 2026-08-18
+
+### Added
+- `setce168n <banks> <firstRoBank>` FIFO command: a generalized CE-163 --
+  same `0000H`-`3FFFH` window and `5800H`-`5FFFH` bank-select trigger, but
+  with the bank count and a first-read-only-bank boundary as load-time
+  parameters instead of CE-163's fixed 2 banks/all-writable. Banks at or
+  above the boundary simulate flash: CPU writes (and `poke`) are silently
+  discarded, but `loadbinary` can still seed their initial content. FIFO
+  interface only, no GUI menu equivalent.
+
 ## [0.7.3] - 2026-08-21
 
 ### Fixed
@@ -73,7 +84,6 @@ per this project's own convention (not just milestones).
   `typeBasicProgramText`) into one shared `SmlAwareTyper` class
   (`src/basic/text_loader.h`), now used by every text-sending path
   instead of two copies plus several gaps.
-
 ## [0.6.6] - 2026-08-11
 
 ### Added

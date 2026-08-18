@@ -274,11 +274,20 @@ Commands:
   `4800H`-based on a PC-1500, `5800H`-based on a PC-1500A) or `0000`;
   `<bytes>` is decimal.
 - `setce163 <0|1>` — FIFO equivalent of Settings > Extension RAM (0000H) >
-  CE-163 (see that section above). Mutually exclusive with `setextram` and
-  `setce155` — enabling one clears the others.
+  CE-163 (see that section above). Mutually exclusive with `setextram`,
+  `setce155`, and `setce168n` — enabling one clears the others.
 - `setce155 <0|1>` — FIFO equivalent of Settings > Extension RAM (0000H) >
-  CE-155 (see that section above). Mutually exclusive with `setextram` and
-  `setce163`, same as `setce163` above.
+  CE-155 (see that section above). Mutually exclusive with `setextram`,
+  `setce163`, and `setce168n`, same as `setce163` above.
+- `setce168n <banks> <firstRoBank>` — a generalized, non-hardware CE-163:
+  same `0000H`-`3FFFH` window, same fixed 16K-per-bank size and
+  `5800H`-`5FFFH` bank-select trigger, but with `<banks>` (total bank count;
+  `0` disables the module) and `<firstRoBank>` (banks at/above this index
+  simulate flash — `writeME0`/`poke` silently discard writes to them,
+  though `loadbinary` can still seed their initial content) as load-time
+  parameters instead of CE-163's fixed 2 banks/all-writable. Mutually
+  exclusive with `setextram`, `setce163`, and `setce155`, same as those are
+  with each other. FIFO-only — no GUI menu equivalent.
 - `status` — CPU registers/flags and the fixed-segment indicator bits.
 - `display` — the 156x7 dot matrix as ASCII art (`#`/`.`).
 - `displaytext` — the ROM's own LCD text buffer (`7BB0H`-`7BFFH`, per the

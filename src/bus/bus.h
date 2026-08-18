@@ -680,14 +680,15 @@ class Bus : public lh5801::MemoryBus {
   // since 7000H+ is fixed onboard hardware the expansion-port rewiring
   // doesn't touch). See extRamExtBase()/extRamExtWindowMaxSize().
   //
-  // Mutually exclusive with CE-163 and CE-155 (see their own setters
-  // below) -- a real PC-1500(A) has one expansion port, so at most one of
-  // these can be physically installed at a time.
+  // Mutually exclusive with CE-163, CE-155, and CE-168N (see their own
+  // setters below) -- a real PC-1500(A) has one expansion port, so at most
+  // one of these can be physically installed at a time.
   void setExtRamExtSize(size_t bytes) {
     extRamExtSize_ = bytes;
     if (bytes != 0) {
       ce163Enabled_ = false;
       ce155Enabled_ = false;
+      ce168nEnabled_ = false;
     }
   }
   size_t extRamExtSize() const { return extRamExtSize_; }
@@ -710,21 +711,22 @@ class Bus : public lh5801::MemoryBus {
   // touches the S1/S2/S3 signals the *other* window's chip-selects are
   // built from, not this one.
   //
-  // Mutually exclusive with CE-163 and CE-155 (see their own setters
-  // below) -- all three occupy this exact same window.
+  // Mutually exclusive with CE-163, CE-155, and CE-168N (see their own
+  // setters below) -- all four occupy this exact same window.
   static constexpr size_t kExtRam0000WindowSize = 0x4000;  // 16K
   void setExtRam0000Size(size_t bytes) {
     extRam0000Size_ = bytes;
-    // Unconditional, unlike setExtRamExtSize's own clearing below: None,
-    // 16K, CE-163, and CE-155 are four mutually-exclusive alternatives
-    // *within this one window/submenu*, so selecting "None" (bytes == 0)
-    // must deactivate CE-163/CE-155 too, not just leave a nonzero size in
-    // place. Before this fix, bytes == 0 skipped the clear entirely, so
-    // selecting "None" while CE-163 was enabled did nothing -- the window
+    // Unconditional, unlike setExtRamExtSize's own clearing above: None,
+    // 16K, CE-163, CE-155, and CE-168N are five mutually-exclusive
+    // alternatives *within this one window/submenu*, so selecting "None"
+    // (bytes == 0) must deactivate the others too, not just leave a nonzero
+    // size in place. Before this fix, bytes == 0 skipped the clear entirely,
+    // so selecting "None" while CE-163 was enabled did nothing -- the window
     // stayed banked, since isUnmapped()'s 0000H-window check gates on
     // !ce163Enabled_ regardless of extRam0000Size_.
     ce163Enabled_ = false;
     ce155Enabled_ = false;
+    ce168nEnabled_ = false;
     reseedReserveArea();  // may move reserveAreaBase() -- see its own comment
   }
   size_t extRam0000Size() const { return extRam0000Size_; }
@@ -739,16 +741,17 @@ class Bus : public lh5801::MemoryBus {
   // window above: 5800H-5FFFH on a PC-1500 (pin 18 = S3), or
   // 6800H-6FFFH on a PC-1500A (same physical pin, now wired to S5).
   //
-  // Mutually exclusive with both extension-RAM windows above and CE-155
-  // below (enabling this clears all three; any of them going active
+  // Mutually exclusive with both extension-RAM windows above, CE-155, and
+  // CE-168N below (enabling this clears all four; any of them going active
   // disables this) -- real hardware has one expansion port, so at most
-  // one of these four can be physically installed at a time.
+  // one of these five can be physically installed at a time.
   void setCe163Enabled(bool enabled) {
     ce163Enabled_ = enabled;
     if (enabled) {
       extRam0000Size_ = 0;
       extRamExtSize_ = 0;
       ce155Enabled_ = false;
+      ce168nEnabled_ = false;
     }
     reseedReserveArea();  // may move reserveAreaBase() -- see its own comment
   }
@@ -765,18 +768,66 @@ class Bus : public lh5801::MemoryBus {
   // the real CE-155 program-start origin (38C5H) instead of the stock
   // unit's 40C5H -- see docs/pc1500_hardware_reference.md.
   //
-  // Mutually exclusive with both extension-RAM windows and CE-163 (see
-  // their own setters) -- same one-expansion-port reasoning.
+  // Mutually exclusive with both extension-RAM windows, CE-163, and
+  // CE-168N (see their own setters) -- same one-expansion-port reasoning.
   void setCe155Enabled(bool enabled) {
     ce155Enabled_ = enabled;
     if (enabled) {
       extRam0000Size_ = 0;
       extRamExtSize_ = 0;
       ce163Enabled_ = false;
+      ce168nEnabled_ = false;
     }
     reseedReserveArea();  // may move reserveAreaBase() -- see its own comment
   }
   bool ce155Enabled() const { return ce155Enabled_; }
+
+  // CE-168N: a generalized version of the CE-163 hack above, for a
+  // parametrized flash/RAM module rather than a fixed, hardware-accurate
+  // one. Same window (0000H-3FFFH), same fixed 16K-per-bank size, same
+  // 5800H-5FFFH bank-select trigger range as CE-163 -- neither the load
+  // address nor the per-bank size is configurable, only these two:
+  //
+  // `banks`: total number of 16K banks (0 disables the module, same "0 =
+  // off" convention as setExtRam0000Size/setExtRamExtSize). Bank select is
+  // `addr % banks` (not `addr & mask`, since banks isn't guaranteed to be a
+  // power of two -- CE-163's real hardware only ever wires one address
+  // line for its fixed 2 banks; this module is explicitly non-hardware, so
+  // there's no equivalent constraint to preserve).
+  //
+  // `firstRoBank`: banks at or above this index simulate a flash chip --
+  // CPU writes (via writeME0, including the `poke` FIFO command, which
+  // intentionally mimics a CPU write) to a read-only bank are silently
+  // discarded, matching flash ignoring a write pulse rather than erroring.
+  // A read-only bank is still fully writable through loadME0 (the
+  // `loadbinary` FIFO command's underlying path) -- that's how a preset
+  // seeds initial flash content before boot, as opposed to a running ROM
+  // attempting to reprogram it live. Pass firstRoBank >= banks for "every
+  // bank writable".
+  //
+  // Mutually exclusive with CE-163, CE-155, and both extension-RAM windows
+  // above -- same one-expansion-port reasoning as setCe163Enabled.
+  void setCe168nEnabled(uint8_t banks, uint8_t firstRoBank) {
+    ce168nEnabled_ = banks != 0;
+    ce168nBanks_ = banks;
+    ce168nFirstRoBank_ = firstRoBank;
+    ce168nBank_ = 0;
+    ce168nRam_.assign(static_cast<size_t>(banks) * 0x4000, 0xFF);  // matches
+                                                                    // real RAM's
+                                                                    // confirmed
+                                                                    // 0xFF
+                                                                    // power-up
+                                                                    // default
+    if (ce168nEnabled_) {
+      extRam0000Size_ = 0;
+      extRamExtSize_ = 0;
+      ce163Enabled_ = false;
+      ce155Enabled_ = false;
+    }
+    reseedReserveArea();  // may move reserveAreaBase() -- see its own comment
+  }
+  bool ce168nEnabled() const { return ce168nEnabled_; }
+  uint8_t ce168nBank() const { return ce168nBank_; }
 
   // Wraps Keyboard::setKeyState. The actual release is deferred by
   // kMinimumHoldCycles (see applyRelease) rather than applied immediately,
@@ -891,11 +942,11 @@ class Bus : public lh5801::MemoryBus {
 
 
   static bool isRom(uint16_t addr) { return addr >= 0xC000; }
-  // When ce163Enabled_, the 0000H window is always "mapped" here regardless
-  // of extRam0000Size_ (which is forced to 0 by the mutual exclusion in
-  // setCe163Enabled) -- the CE-163 has its own separate backing store
-  // (ce163Ram_), read/written directly in readME0/writeME0, not gated by
-  // this size check at all.
+  // When ce163Enabled_/ce168nEnabled_, the 0000H window is always "mapped"
+  // here regardless of extRam0000Size_ (which is forced to 0 by the mutual
+  // exclusion in setCe163Enabled/setCe168nEnabled) -- both have their own
+  // separate backing store (ce163Ram_/ce168nRam_), read/written directly in
+  // readME0/writeME0, not gated by this size check at all.
   //
   // ce155Enabled_ short-circuits both windows to CE-155's own fixed,
   // real topology instead of the generic size-gated checks: the 0000H
@@ -912,8 +963,8 @@ class Bus : public lh5801::MemoryBus {
       if (inExtWindow) return (addr - extBase) >= 0x1800;  // 6K
       return addr >= 0x8000 && addr <= 0xBFFF;              // CE-150/153/158 (not connected)
     }
-    return (in0000Window && addr >= extRam0000Size_ && !ce163Enabled_) ||  // beyond configured
-                                                                            // 0000H module RAM
+    return (in0000Window && addr >= extRam0000Size_ && !ce163Enabled_ &&
+             !ce168nEnabled_) ||  // beyond configured 0000H module RAM
            (inExtWindow && (addr - extBase) >= extRamExtSize_) ||  // beyond configured expansion RAM
            (addr >= 0x8000 && addr <= 0xBFFF);                // CE-150/153/158 (not connected)
   }
@@ -1003,6 +1054,11 @@ class Bus : public lh5801::MemoryBus {
   bool ce155Enabled_ = false;
   uint8_t ce163Bank_ = 0;
   std::array<uint8_t, 0x8000> ce163Ram_{};  // 32K, two independent 16K banks back-to-back
+  bool ce168nEnabled_ = false;
+  uint8_t ce168nBank_ = 0;
+  uint8_t ce168nBanks_ = 0;
+  uint8_t ce168nFirstRoBank_ = 0;
+  std::vector<uint8_t> ce168nRam_;  // ce168nBanks_ independent 16K banks back-to-back
   std::array<RomModule, kNumRomModules> romModules_;
   ExpansionMock expansionMock_;
   bool pv_ = false;  // matches CPU::reset()'s own pv_/pu_ default

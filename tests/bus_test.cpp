@@ -482,10 +482,10 @@ void testCe163IsMutuallyExclusiveWithOtherExtensionRam() {
 }
 
 // Regression test for a real bug: selecting "None" (bytes == 0) in the
-// Extension RAM (0000H) submenu is itself one of the four mutually-
+// Extension RAM (0000H) submenu is itself one of the five mutually-
 // exclusive alternatives in that same submenu, so it must clear
-// CE-163/CE-155 too -- not just nonzero sizes. Before this fix,
-// setExtRam0000Size only cleared the other two on bytes != 0, so
+// CE-163/CE-155/CE-168N too -- not just nonzero sizes. Before this fix,
+// setExtRam0000Size only cleared the others on bytes != 0, so
 // setExtRam0000Size(0) while CE-163 was enabled left CE-163 (and its
 // gating of the 0000H window via isUnmapped()'s !ce163Enabled_ check)
 // silently in effect -- confirmed live: the "None" menu item appeared to
@@ -505,11 +505,18 @@ void testExtRam0000SizeZeroClearsCe163AndCe155() {
   bus.setExtRam0000Size(0);
   CHECK(bus.ce155Enabled() == false);  // same for CE-155
   CHECK(bus.extRam0000Size() == 0);
+
+  bus.setCe168nEnabled(4, 2);
+  CHECK(bus.ce168nEnabled() == true);
+  bus.setExtRam0000Size(0);
+  CHECK(bus.ce168nEnabled() == false);  // same for CE-168N
+  CHECK(bus.extRam0000Size() == 0);
 }
 
-// Same as above, but for the fourth mutually-exclusive option, CE-155 --
-// and confirming CE-163/CE-155 clear *each other* too (not just the two
-// plain-size windows), completing the four-way exclusion web.
+// Same as above, but for CE-155 -- and confirming CE-163/CE-155 clear
+// *each other* too (not just the two plain-size windows), completing that
+// part of the exclusion web (see testCe168nIsMutuallyExclusiveWithOther
+// ExtensionRamAndCe163 below for CE-168N's own share of it).
 void testCe155IsMutuallyExclusiveWithOtherExtensionRam() {
   pc1500::Keyboard kb;
   pc1500::Bus bus(kb);
@@ -532,6 +539,100 @@ void testCe155IsMutuallyExclusiveWithOtherExtensionRam() {
   bus.setCe155Enabled(true);
   CHECK(bus.ce155Enabled() == true);
   CHECK(bus.ce163Enabled() == false);  // cleared by enabling CE-155 again
+}
+
+// CE-168N: same window/bank-select mechanism as CE-163, generalized to a
+// parametrized bank count and a first-read-only-bank boundary. Banks below
+// the boundary behave exactly like CE-163's banks (independent contents,
+// freely writable); banks at/above it simulate flash -- writeME0 discards
+// writes silently, but loadME0 (the `loadbinary` FIFO command's path) can
+// still seed their initial contents.
+void testCe168nBankSwitchingRespectsReadOnlyBanks() {
+  pc1500::Keyboard kb;
+  pc1500::Bus bus(kb);
+  CHECK(bus.ce168nEnabled() == false);
+  CHECK(bus.ce168nBank() == 0);
+  CHECK(bus.readME0(0x0000) == 0xFF);  // disabled -- unmapped, matching stock hardware
+
+  bus.setCe168nEnabled(4, 2);  // 4 banks, banks 2-3 read-only
+  CHECK(bus.ce168nEnabled() == true);
+  CHECK(bus.readME0(0x0000) == 0xFF);  // real RAM's confirmed power-up default
+
+  // Bank 0 (writable) is active by default.
+  bus.writeME0(0x0000, 0xAA);
+  CHECK(bus.readME0(0x0000) == 0xAA);
+
+  // Select bank 1 (still writable) -- same address-line trigger as CE-163,
+  // generalized via addr % banks rather than addr & mask.
+  bus.writeME0(0x5801, 0x00);
+  CHECK(bus.ce168nBank() == 1);
+  CHECK(bus.readME0(0x0000) == 0xFF);  // bank 1's own fresh contents
+  bus.writeME0(0x0000, 0xCC);
+  CHECK(bus.readME0(0x0000) == 0xCC);
+
+  // Bank 0's contents survived bank 1's writes.
+  bus.writeME0(0x5800, 0x00);
+  CHECK(bus.ce168nBank() == 0);
+  CHECK(bus.readME0(0x0000) == 0xAA);
+
+  // Select bank 2 -- read-only. A normal CPU write (writeME0) is silently
+  // discarded, not an error.
+  bus.writeME0(0x5802, 0x00);
+  CHECK(bus.ce168nBank() == 2);
+  CHECK(bus.readME0(0x0000) == 0xFF);
+  bus.writeME0(0x0000, 0xEE);
+  CHECK(bus.readME0(0x0000) == 0xFF);  // write ignored -- bank is read-only
+
+  // loadME0 (the scripting/preset load path) can still seed bank 2's
+  // content, bypassing the read-only gate.
+  uint8_t flashByte = 0x42;
+  bus.loadME0(0x0000, &flashByte, 1);
+  CHECK(bus.readME0(0x0000) == 0x42);
+  // ...and a subsequent CPU write still can't overwrite it.
+  bus.writeME0(0x0000, 0x00);
+  CHECK(bus.readME0(0x0000) == 0x42);
+
+  // Bank 3 is independently read-only too, with its own storage.
+  bus.writeME0(0x5803, 0x00);
+  CHECK(bus.ce168nBank() == 3);
+  CHECK(bus.readME0(0x0000) == 0xFF);
+  bus.writeME0(0x0000, 0x99);
+  CHECK(bus.readME0(0x0000) == 0xFF);
+}
+
+// Same one-expansion-port reasoning as CE-163/CE-155: mutually exclusive
+// with both extension-RAM windows, CE-163, and CE-155, enforced from every
+// direction.
+void testCe168nIsMutuallyExclusiveWithOtherExtensionRamAndCe163() {
+  pc1500::Keyboard kb;
+  pc1500::Bus bus(kb);
+
+  bus.setExtRam0000Size(pc1500::Bus::kExtRam0000WindowSize);
+  bus.setCe168nEnabled(4, 2);
+  CHECK(bus.ce168nEnabled() == true);
+  CHECK(bus.extRam0000Size() == 0);  // cleared by enabling CE-168N
+
+  bus.setExtRamExtSize(bus.extRamExtWindowMaxSize());
+  CHECK(bus.ce168nEnabled() == false);  // cleared by setting a nonzero expansion-window size
+
+  bus.setCe168nEnabled(4, 2);
+  CHECK(bus.extRamExtSize() == 0);  // cleared by enabling CE-168N again
+
+  bus.setCe163Enabled(true);
+  CHECK(bus.ce163Enabled() == true);
+  CHECK(bus.ce168nEnabled() == false);  // cleared by enabling CE-163
+
+  bus.setCe168nEnabled(4, 2);
+  CHECK(bus.ce168nEnabled() == true);
+  CHECK(bus.ce163Enabled() == false);  // cleared by enabling CE-168N again
+
+  bus.setCe155Enabled(true);
+  CHECK(bus.ce155Enabled() == true);
+  CHECK(bus.ce168nEnabled() == false);  // cleared by enabling CE-155
+
+  bus.setCe168nEnabled(4, 2);
+  CHECK(bus.ce168nEnabled() == true);
+  CHECK(bus.ce155Enabled() == false);  // cleared by enabling CE-168N again
 }
 
 // PC-1500A: built-in RAM grows from 2K to 6K (absorbing what would
@@ -956,6 +1057,8 @@ int main() {
   testCe163IsMutuallyExclusiveWithOtherExtensionRam();
   testExtRam0000SizeZeroClearsCe163AndCe155();
   testCe155IsMutuallyExclusiveWithOtherExtensionRam();
+  testCe168nBankSwitchingRespectsReadOnlyBanks();
+  testCe168nIsMutuallyExclusiveWithOtherExtensionRamAndCe163();
   testExtensionWindowFollowsMachineVariant();
   testCe163TriggerRangeFollowsMachineVariant();
   testCe155IsolatesOnlyTopOfLowerWindow();

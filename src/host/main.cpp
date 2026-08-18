@@ -1868,11 +1868,22 @@ int main(int argc, char** argv) {
     } else if (cmd == "setce155") {
       // FIFO equivalent of the Settings > Extension RAM (0000H) > CE-155
       // menu item. <enabled> is 0 or 1. Mutually exclusive with both
-      // setextram windows and CE-163, same as setce163 above. Needs
-      // `reset` after.
+      // setextram windows, CE-163, and CE-168N, same as setce163 above.
+      // Needs `reset` after.
       long enabled = 0;
       iss >> std::dec >> enabled;
       bus.setCe155Enabled(enabled != 0);
+    } else if (cmd == "setce168n") {
+      // FIFO equivalent of setce163, generalized: <banks> <firstRoBank>.
+      // <banks> 0 disables the module (same "0 = off" convention as
+      // setextram); banks at/above <firstRoBank> simulate flash (writes
+      // silently discarded, but still loadable via `loadbinary`) -- see
+      // Bus::setCe168nEnabled's own comment. Mutually exclusive with
+      // setextram/setce163/setce155, same as those are with each other.
+      // Needs `reset` after, same as setextram/setce163.
+      long banks = 0, roBank = 0;
+      iss >> std::dec >> banks >> roBank;
+      bus.setCe168nEnabled(static_cast<uint8_t>(banks), static_cast<uint8_t>(roBank));
     } else if (cmd == "dump") {
       long start = 0, end = 0;
       iss >> std::hex >> start >> end;

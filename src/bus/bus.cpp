@@ -442,6 +442,11 @@ uint8_t Bus::readME0(uint16_t addr) {
   if (ce163Enabled_ && addr <= 0x3FFF) {
     return ce163Ram_[static_cast<size_t>(ce163Bank_) * 0x4000 + addr];
   }
+  // CE-168N: same idea as CE-163 above, generalized to a parametrized bank
+  // count -- see Bus::setCe168nEnabled's own comment.
+  if (ce168nEnabled_ && addr <= 0x3FFF) {
+    return ce168nRam_[static_cast<size_t>(ce168nBank_) * 0x4000 + addr];
+  }
   if (isUnmapped(addr)) return 0xFF;
   return me0_[effectiveAddr(addr, machineVariant_)];
 }
@@ -483,6 +488,24 @@ void Bus::writeME0(uint16_t addr, uint8_t value) {
   // me0_ and goes straight to the bank-selected slice of ce163Ram_.
   if (ce163Enabled_ && addr <= 0x3FFF) {
     ce163Ram_[static_cast<size_t>(ce163Bank_) * 0x4000 + addr] = value;
+    return;
+  }
+  // CE-168N bank-select trigger, same 5800H-5FFFH range as CE-163 (same
+  // physical port). `%` rather than `&`, since the bank count is an
+  // arbitrary parameter, not guaranteed to be a power of two.
+  if (ce168nEnabled_ && addr >= 0x5800 && addr <= 0x5FFF) {
+    ce168nBank_ = static_cast<uint8_t>(addr % ce168nBanks_);
+    return;
+  }
+  // CE-168N data write -- a bank at or above ce168nFirstRoBank_ simulates
+  // flash: the write is silently discarded rather than erroring, matching
+  // a flash chip ignoring an unprogrammed write pulse. Initial content for
+  // a read-only bank comes from loadME0 (the `loadbinary` FIFO command),
+  // not this CPU-write path -- see Bus::loadME0's own comment.
+  if (ce168nEnabled_ && addr <= 0x3FFF) {
+    if (ce168nBank_ < ce168nFirstRoBank_) {
+      ce168nRam_[static_cast<size_t>(ce168nBank_) * 0x4000 + addr] = value;
+    }
     return;
   }
   if (isUnmapped(addr) || isRom(addr)) return;
@@ -603,6 +626,21 @@ void Bus::advanceCycles(int cycles) {
 }
 
 void Bus::loadME0(uint16_t addr, const uint8_t* data, size_t size) {
+  // CE-168N: this is the scripting/preset load path (backs the `loadbinary`
+  // FIFO command), as opposed to writeME0's CPU-write path -- it writes
+  // into the currently selected bank's storage unconditionally, bypassing
+  // the read-only-bank check, so a preset can seed a flash bank's initial
+  // content (select it first via the 5800H-5FFFH trigger, same as any
+  // other bank) before the ROM ever runs. Bytes beyond addr<=0x3FFF still
+  // fall through to me0_ below, same as an ordinary loadbinary call.
+  if (ce168nEnabled_ && addr <= 0x3FFF) {
+    for (size_t i = 0; i < size; i++) {
+      uint32_t target = static_cast<uint32_t>(addr) + i;
+      if (target > 0x3FFF) break;
+      ce168nRam_[static_cast<size_t>(ce168nBank_) * 0x4000 + target] = data[i];
+    }
+    return;
+  }
   for (size_t i = 0; i < size; i++) {
     uint32_t target = static_cast<uint32_t>(addr) + i;
     if (target > 0xFFFF) break;
@@ -663,6 +701,14 @@ void Bus::saveState(std::ostream& os) const {
   writeBool(os, ce155Enabled_);
   writeBytes(os, me0_.data(), kSavedRamSize);
   writeBytes(os, ce163Ram_.data(), ce163Ram_.size());
+  // Version 6 addition -- inserted here (rather than appended at the very
+  // end, unlike version 5's own fields below) to keep it next to the
+  // CE-163 fields it parallels.
+  writeBool(os, ce168nEnabled_);
+  writeU8(os, ce168nBank_);
+  writeU8(os, ce168nBanks_);
+  writeU8(os, ce168nFirstRoBank_);
+  writeBytes(os, ce168nRam_.data(), ce168nRam_.size());  // size implied by ce168nBanks_ above
   for (const RomModule& m : romModules_) {
     saveRomModule(os, m);
   }
@@ -711,6 +757,12 @@ bool Bus::loadState(std::istream& is, std::string* error, bool* configMismatch,
   ce163Bank_ = savedCe163Bank;
   readBytes(is, me0_.data(), kSavedRamSize);
   readBytes(is, ce163Ram_.data(), ce163Ram_.size());
+  ce168nEnabled_ = readBool(is);
+  ce168nBank_ = readU8(is);
+  ce168nBanks_ = readU8(is);
+  ce168nFirstRoBank_ = readU8(is);
+  ce168nRam_.assign(static_cast<size_t>(ce168nBanks_) * 0x4000, 0);
+  readBytes(is, ce168nRam_.data(), ce168nRam_.size());
   bool ok = true;
   for (RomModule& m : romModules_) {
     ok = loadRomModuleState(is, m) && ok;
