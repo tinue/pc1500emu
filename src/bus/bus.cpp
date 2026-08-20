@@ -490,12 +490,16 @@ void Bus::writeME0(uint16_t addr, uint8_t value) {
     ce163Ram_[static_cast<size_t>(ce163Bank_) * 0x4000 + addr] = value;
     return;
   }
-  // CE-168N bank-select trigger, same 5800H-5FFFH range as CE-163 (same
-  // physical port). `%` rather than `&`, since the bank count is an
-  // arbitrary parameter, not guaranteed to be a power of two.
-  if (ce168nEnabled_ && addr >= 0x5800 && addr <= 0x5FFF) {
-    ce168nBank_ = static_cast<uint8_t>(addr % ce168nBanks_);
-    return;
+  // CE-168N bank-select trigger, same range as CE-163 (same physical port,
+  // same machine-variant dependence -- 5800H-5FFFH on a PC-1500, or
+  // 6800H-6FFFH on a PC-1500A). `%` rather than `&`, since the bank count
+  // is an arbitrary parameter, not guaranteed to be a power of two.
+  {
+    uint16_t triggerBase = machineVariant_ == MachineVariant::PC1500A ? 0x6800 : 0x5800;
+    if (ce168nEnabled_ && addr >= triggerBase && addr <= triggerBase + 0x7FF) {
+      ce168nBank_ = static_cast<uint8_t>(addr % ce168nBanks_);
+      return;
+    }
   }
   // CE-168N data write -- a bank at or above ce168nFirstRoBank_ simulates
   // flash: the write is silently discarded rather than erroring, matching
@@ -630,7 +634,7 @@ void Bus::loadME0(uint16_t addr, const uint8_t* data, size_t size) {
   // FIFO command), as opposed to writeME0's CPU-write path -- it writes
   // into the currently selected bank's storage unconditionally, bypassing
   // the read-only-bank check, so a preset can seed a flash bank's initial
-  // content (select it first via the 5800H-5FFFH trigger, same as any
+  // content (select it first via the bank-select trigger, same as any
   // other bank) before the ROM ever runs. Bytes beyond addr<=0x3FFF still
   // fall through to me0_ below, same as an ordinary loadbinary call.
   if (ce168nEnabled_ && addr <= 0x3FFF) {

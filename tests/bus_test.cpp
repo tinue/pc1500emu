@@ -692,6 +692,28 @@ void testCe163TriggerRangeFollowsMachineVariant() {
   CHECK(bus.ce163Bank() == 0);
 }
 
+// Same regression risk as testCe163TriggerRangeFollowsMachineVariant above,
+// for CE-168N's own trigger (same range as CE-163, since it shares the
+// same physical port).
+void testCe168nTriggerRangeFollowsMachineVariant() {
+  pc1500::Keyboard kb;
+  pc1500::Bus bus(kb);
+  bus.setMachineVariant(pc1500::Bus::MachineVariant::PC1500A);
+  bus.setCe168nEnabled(4, 4);  // 4 banks, all writable
+  CHECK(bus.ce168nBank() == 0);
+
+  // The PC-1500's own trigger range (5800H-5FFFH) must NOT fire once the
+  // variant is PC-1500A.
+  bus.writeME0(0x5801, 0x00);  // would select bank 1 % 4 on a PC-1500
+  CHECK(bus.ce168nBank() == 0);  // unchanged
+
+  // The PC-1500A's own trigger range (6800H-6FFFH) does fire.
+  bus.writeME0(0x6801, 0x00);
+  CHECK(bus.ce168nBank() == 1);
+  bus.writeME0(0x6802, 0x00);
+  CHECK(bus.ce168nBank() == 2);
+}
+
 // CE-155's real hardware topology isolates just the top 2K of the
 // 0000H-3FFFH window (3800H-3FFFH), unlike the generic 0000H-window
 // (always left-aligned from 0000H) -- confirmed for both machine
@@ -1061,6 +1083,7 @@ int main() {
   testCe168nIsMutuallyExclusiveWithOtherExtensionRamAndCe163();
   testExtensionWindowFollowsMachineVariant();
   testCe163TriggerRangeFollowsMachineVariant();
+  testCe168nTriggerRangeFollowsMachineVariant();
   testCe155IsolatesOnlyTopOfLowerWindow();
   testMachineVariantClampsExtRamExtSize();
   testExpansionModuleDataWindowIsReadWrite();

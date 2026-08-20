@@ -785,8 +785,9 @@ class Bus : public lh5801::MemoryBus {
   // CE-168N: a generalized version of the CE-163 hack above, for a
   // parametrized flash/RAM module rather than a fixed, hardware-accurate
   // one. Same window (0000H-3FFFH), same fixed 16K-per-bank size, same
-  // 5800H-5FFFH bank-select trigger range as CE-163 -- neither the load
-  // address nor the per-bank size is configurable, only these two:
+  // machine-variant-dependent bank-select trigger range as CE-163
+  // (5800H-5FFFH on a PC-1500, 6800H-6FFFH on a PC-1500A) -- neither the
+  // load address nor the per-bank size is configurable, only these two:
   //
   // `banks`: total number of 16K banks (0 disables the module, same "0 =
   // off" convention as setExtRam0000Size/setExtRamExtSize). Bank select is

@@ -4,6 +4,15 @@ All notable changes to this project are documented here. Versions follow
 `CMakeLists.txt`'s `project(pc1500emu VERSION ...)`, bumped on every push
 per this project's own convention (not just milestones).
 
+## [0.7.5] - 2026-08-20
+
+### Fixed
+- `setce168n`'s bank-select trigger now follows the machine variant, same
+  as CE-163's own trigger: `5800H`-`5FFFH` on a PC-1500, `6800H`-`6FFFH` on
+  a PC-1500A. Previously hardcoded to the PC-1500 range regardless of
+  `setmachine`, so CE-168N silently stopped responding to bank-select
+  writes on a PC-1500A.
+
 ## [0.7.4] - 2026-08-18
 
 ### Added
